@@ -346,17 +346,19 @@ def smart_constant_value(pred):
 
 
 def mean_field_logits(logits,
-                      covmat,
+                      covmat=None,
                       mean_field_factor=1.,
                       likelihood='logistic'):
   """Adjust the SNGP logits so its softmax approximates posterior mean [1].
 
   Arguments:
     logits: A float tensor of shape (batch_size, num_classes).
-    covmat: A float tensor of shape (batch_size, batch_size).
+    covmat: A float tensor of shape (batch_size, batch_size). If None then
+      it assumes the covmat is an identity matrix.
     mean_field_factor: The scale factor for mean-field approximation, used to
       adjust the influence of posterior variance in posterior mean
-      approximation.
+      approximation. If covmat=None then it is used as the scaling parameter for
+      temperature scaling.
     likelihood: Likelihood for integration in Gaussian-approximated latent
       posterior.
 
@@ -368,13 +370,22 @@ def mean_field_logits(logits,
     raise ValueError(
         f'Likelihood" must be one of (\'logistic\', \'binary_logistic\', \'poisson\'), got {likelihood}.'
     )
-  if likelihood == 'poisson':
-    logits_scale = tf.exp(tf.linalg.diag_part(covmat) * mean_field_factor / 2.)
-    if mean_field_factor > 0:
-      logits = logits * logits_scale
+
+  if mean_field_factor < 0:
+    return logits
+
+  # Compute standard deviation.
+  if covmat is None:
+    stddev = 1.
   else:
-    logits_scale = tf.sqrt(1. + tf.linalg.diag_part(covmat) * mean_field_factor)
-    if mean_field_factor > 0:
-      logits = logits / tf.expand_dims(logits_scale, axis=-1)
+    stddev = tf.linalg.diag_part(covmat)
+
+  # Compute mean-field approximation using standard deviation.
+  if likelihood == 'poisson':
+    logits_scale = tf.exp(stddev * mean_field_factor / 2.)
+    logits = logits * logits_scale
+  else:
+    logits_scale = tf.sqrt(1. + stddev * mean_field_factor)
+    logits = logits / tf.expand_dims(logits_scale, axis=-1)
 
   return logits
